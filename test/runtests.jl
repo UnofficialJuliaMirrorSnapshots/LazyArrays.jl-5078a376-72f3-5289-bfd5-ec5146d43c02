@@ -6,6 +6,7 @@ include("multests.jl")
 include("ldivtests.jl")
 include("addtests.jl")
 include("setoptests.jl")
+include("macrotests.jl")
 
 
 @testset "concat" begin
@@ -173,6 +174,15 @@ include("setoptests.jl")
         B[1,3] = 2
         @test B[1,3] == y[1,1] == 2
     end
+
+    @testset "Any/All" begin
+        @test all(Vcat(true, Fill(true,100_000_000)))
+        @test any(Vcat(false, Fill(true,100_000_000)))
+        @test all(iseven, Vcat(2, Fill(4,100_000_000)))
+        @test any(iseven, Vcat(2, Fill(1,100_000_000)))
+        @test_throws TypeError all(Vcat(1))
+        @test_throws TypeError any(Vcat(1))
+    end
 end
 
 
@@ -225,27 +235,13 @@ end
 
 @testset "BroadcastArray" begin
     A = randn(6,6)
-
     B = BroadcastArray(exp, A)
-    B′ = @~ exp.(A)
-    B′′ = @~ @. exp(A)
     @test Matrix(B) == exp.(A)
-    @test Matrix(B′) == exp.(A)
-    @test Matrix(B′′) == exp.(A)
 
     C = BroadcastArray(+, A, 2)
-    C′ = @~ A .+ 2
-    C′′ = @~ @. A + 2
     @test C == A .+ 2
-    @test C′ == A .+ 2
-    @test C′′ == A .+ 2
-
     D = BroadcastArray(+, A, C)
-    D′ = @~ A + C
-    D′′ = @~ @. A + C
     @test D == A + C
-    @test D′ == A + C
-    @test D′′ == A + C
 
     @test sum(B) ≈ sum(exp, A)
     @test sum(C) ≈ sum(A .+ 2)
