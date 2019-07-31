@@ -17,7 +17,7 @@ import Base: AbstractArray, AbstractMatrix, AbstractVector,
          getindex, setindex!, OneTo, intersect, @_inline_meta, inv,
          sort, sort!, issorted, sortperm, diff, cumsum, sum, in, broadcast,
          eltype, parent, real, imag,
-         conj, transpose, adjoint,
+         conj, transpose, adjoint, vec,
          exp, log, sqrt, cos, sin, tan, csc, sec, cot,
                    cosh, sinh, tanh, csch, sech, coth,
                    acos, asin, atan, acsc, asec, acot,
@@ -30,7 +30,8 @@ import Base: AbstractArray, AbstractMatrix, AbstractVector,
       AbstractArray, AbstractVector, axes, (:), _sub2ind_recurse, broadcast, promote_eltypeof,
       similar, @_gc_preserve_end, @_gc_preserve_begin,
       @nexprs, @ncall, @ntuple,
-      all, any
+      all, any,
+      isbitsunion
 
 import Base.Broadcast: BroadcastStyle, AbstractArrayStyle, Broadcasted, broadcasted,
                         combine_eltypes, DefaultArrayStyle, instantiate, materialize,

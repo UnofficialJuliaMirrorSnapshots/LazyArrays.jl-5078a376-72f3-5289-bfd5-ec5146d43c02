@@ -1,5 +1,6 @@
 using Test, LinearAlgebra, LazyArrays, StaticArrays, FillArrays
-import LazyArrays: CachedArray
+import LazyArrays: CachedArray, colsupport, rowsupport
+
 include("memorylayouttests.jl")
 include("applytests.jl")
 include("multests.jl")
@@ -7,7 +8,6 @@ include("ldivtests.jl")
 include("addtests.jl")
 include("setoptests.jl")
 include("macrotests.jl")
-
 
 @testset "concat" begin
     @testset "Vcat" begin
@@ -24,6 +24,8 @@ include("macrotests.jl")
         @test copy(A) isa Vcat
         @test copy(A) == A
         @test copy(A) !== A
+        @test vec(A) === A
+        @test A' == transpose(A) == Vector(A)'
 
         A = Vcat(1:10, 1:20)
         @test @inferred(length(A)) == 30
@@ -36,6 +38,10 @@ include("macrotests.jl")
         @test @allocated(copyto!(b, A)) == 0
         @test b == vcat(A.arrays...)
         @test copy(A) === A
+        @test vec(A) === A
+        @test A' == transpose(A) == Vector(A)'
+        @test A' === Hcat((1:10)', (1:20)')
+        @test transpose(A) === Hcat(transpose(1:10), transpose(1:20))
 
         A = Vcat(randn(2,10), randn(4,10))
         @test @inferred(length(A)) == 60
@@ -50,8 +56,31 @@ include("macrotests.jl")
         @test copy(A) isa Vcat
         @test copy(A) == A
         @test copy(A) !== A
+        @test vec(A) == vec(Matrix(A))
+        @test A' == transpose(A) == Matrix(A)'
+
+        A = Vcat(randn(2,10).+im.*randn(2,10), randn(4,10).+im.*randn(4,10))
+        @test eltype(A) == ComplexF64
+        @test @inferred(length(A)) == 60
+        @test @inferred(size(A)) == (6,10)
+        @test_throws BoundsError A[61]
+        @test_throws BoundsError A[7,1]
+        b = Array{ComplexF64}(undef, 7,10)
+        @test_throws DimensionMismatch copyto!(b, A)
+        b = Array{ComplexF64}(undef, 6,10)
+        @test @allocated(copyto!(b, A)) == 0
+        @test b == vcat(A.arrays...)
+        @test copy(A) isa Vcat
+        @test copy(A) == A
+        @test copy(A) !== A
+        @test vec(A) == vec(Matrix(A))
+        @test A' == Matrix(A)'
+        @test transpose(A) == transpose(Matrix(A))
 
         @test Vcat() isa Vcat{Any,1,Tuple{}}
+
+        A = Vcat(1,zeros(3,1))
+        @test_broken A isa AbstractMatrix
     end
     @testset "Hcat" begin
         A = Hcat(1:10, 2:11)
@@ -65,6 +94,10 @@ include("macrotests.jl")
         @test @allocated(copyto!(b, A)) == 0
         @test b == hcat(A.arrays...)
         @test copy(A) === A
+        @test vec(A) == vec(Matrix(A))
+        @test vec(A) === Vcat(1:10,2:11)
+        @test A' == Matrix(A)'
+        @test A' === Vcat((1:10)', (2:11)')
 
         A = Hcat(Vector(1:10), Vector(2:11))
         b = Array{Int}(undef, 10, 2)
@@ -74,15 +107,30 @@ include("macrotests.jl")
         @test copy(A) isa Hcat
         @test copy(A) == A
         @test copy(A) !== A
+        @test vec(A) == vec(Matrix(A))
+        @test vec(A) === Vcat(A.arrays...)
+        @test A' == Matrix(A)'
 
         A = Hcat(1, zeros(1,5))
         @test A == hcat(1, zeros(1,5))
+        @test vec(A) == vec(Matrix(A))
+        @test_broken A' == Matrix(A)'
 
         A = Hcat(Vector(1:10), randn(10, 2))
         b = Array{Float64}(undef, 10, 3)
         copyto!(b, A)
         @test b == hcat(A.arrays...)
         @test @allocated(copyto!(b, A)) == 0
+        @test vec(A) == vec(Matrix(A))
+
+        A = Hcat(randn(5).+im.*randn(5), randn(5,2).+im.*randn(5,2))
+        b = Array{ComplexF64}(undef, 5, 3)
+        copyto!(b, A)
+        @test b == hcat(A.arrays...)
+        @test @allocated(copyto!(b, A)) == 0
+        @test vec(A) == vec(Matrix(A))
+        @test A' == Matrix(A)'
+        @test transpose(A) == transpose(Matrix(A))
     end
 
 
@@ -182,6 +230,18 @@ include("macrotests.jl")
         @test any(iseven, Vcat(2, Fill(1,100_000_000)))
         @test_throws TypeError all(Vcat(1))
         @test_throws TypeError any(Vcat(1))
+    end
+
+    @testset "isbitsunion #45" begin 
+        @test copyto!(Vector{Vector{Int}}(undef,6), Vcat([[1], [2], [3]], [[1], [2], [3]])) ==
+            [[1], [2], [3], [1], [2], [3]]
+
+        a = Vcat{Union{Float64,UInt8}}([1.0], [UInt8(1)])
+        @test Base.isbitsunion(eltype(a))
+        r = Vector{Union{Float64,UInt8}}(undef,2)
+        @test copyto!(r, a) == a
+        @test r == a
+        @test copyto!(Vector{Float64}(undef,2), a) == [1.0,1.0]
     end
 end
 
@@ -367,4 +427,14 @@ end
     @test Mul(H, H') .+ 1 == H*H' .+ 1
     B =  randn(2,2)
     @test Mul(H, H') .+ B == H*H' .+ B
+end
+
+@testset "col/rowsupport" begin
+    A = randn(5,6)
+    @test rowsupport(A,1) === Base.OneTo(6)
+    @test colsupport(A,1) === Base.OneTo(5)
+    D = Diagonal(randn(5))
+    @test rowsupport(D,3) === colsupport(D,3) === 3:3
+    Z = Zeros(5)
+    @test rowsupport(Z,1) === colsupport(Z,1) === 1:0
 end
