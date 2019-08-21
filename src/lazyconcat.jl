@@ -42,11 +42,7 @@ size(f::Vcat{<:Any,2}) = (+(map(a -> size(a,1), f.arrays)...), size(f.arrays[1],
 Base.IndexStyle(::Type{<:Vcat{T,1}}) where T = Base.IndexLinear()
 Base.IndexStyle(::Type{<:Vcat{T,2}}) where T = Base.IndexCartesian()
 
-struct VcatLayout{Lays} <: MemoryLayout
-    layouts::Lays
-end
 
-MemoryLayout(V::Vcat) = VcatLayout(MemoryLayout.(V.arrays))
 
 @propagate_inbounds @inline function getindex(f::Vcat{T,1}, k::Integer) where T
     κ = k
@@ -327,7 +323,7 @@ end
 
 # Cannot broadcast Vcat's in a lazy way so stick to BroadcastArray
 broadcasted(::LazyArrayStyle, op, A::Vcat{<:Any,1}, B::Vcat{<:Any,1}) =
-    BroadcastArray(Broadcasted{LazyArrayStyle}(op, (A, B)))
+    Broadcasted{LazyArrayStyle}(op, (A, B))
 
 
 function +(A::Vcat, B::Vcat)
@@ -381,7 +377,7 @@ _vcat_broadcasted(::Type{T}, op, (Ahead, Atail)::Tuple{<:SVector{M},<:AbstractFi
 
 # default is BroadcastArray
 _vcat_broadcasted(::Type{T}, op, A, B) where T =
-    BroadcastArray(Broadcasted{LazyArrayStyle}(op, (_Vcat(A), _Vcat(B))))
+    Broadcasted{LazyArrayStyle}(op, (_Vcat(A), _Vcat(B)))
 
 
 broadcasted(::LazyArrayStyle{1}, op, A::Vcat{T, 1, <:Tuple{<:Any,<:Any}},
@@ -438,3 +434,58 @@ function in(x, V::Vcat)
     end
     false
 end
+
+_fill!(a, x) = fill!(a,x)
+function _fill!(a::Number, x) 
+    a == x || throw(ArgumentError("Cannot set $a to $x"))
+    a
+end
+
+function fill!(V::AbstractConcatArray, x) 
+    for a in V.arrays
+        _fill!(a, x)
+    end
+    V
+end
+
+###
+# *
+###
+
+struct VcatLayout{Lays} <: MemoryLayout end
+struct HcatLayout{Lays} <: MemoryLayout end
+
+tuple_type_memorylayouts(::Type{I}) where I<:Tuple = Tuple{typeof.(MemoryLayout.(I.parameters))...}
+tuple_type_memorylayouts(::Type{Tuple{A}}) where {A} = Tuple{typeof(MemoryLayout(A))}
+tuple_type_memorylayouts(::Type{Tuple{A,B}}) where {A,B} = Tuple{typeof(MemoryLayout(A)),typeof(MemoryLayout(B))}
+tuple_type_memorylayouts(::Type{Tuple{A,B,C}}) where {A,B,C} = Tuple{typeof(MemoryLayout(A)),typeof(MemoryLayout(B)),typeof(MemoryLayout(C))}
+
+
+MemoryLayout(::Type{Vcat{T,N,I}}) where {T,N,I} = VcatLayout{tuple_type_memorylayouts(I)}()
+MemoryLayout(::Type{Hcat{T,I}}) where {T,I} = HcatLayout{tuple_type_memorylayouts(I)}()
+
+@lazymul Hcat
+@lazymul Vcat{<:Any,2}
+
+*(A::Hcat, B::Vcat{<:Any,2}) = materialize(Mul(A,B))
+*(A::Vcat{<:Any,2}, B::Hcat) = materialize(Mul(A,B))
+
+function materialize!(M::MatMulVecAdd{<:HcatLayout,<:VcatLayout})
+    α,A,B,β,C =  M.α,M.A,M.B,M.β,M.C
+    T = eltype(C)
+    _fill_lmul!(β,C) # this is temporary until strong β = false is supported
+    for (a,b) in zip(A.arrays,B.arrays)
+        materialize!(MulAdd(α,a,b,one(T),C))
+    end
+    C
+ end
+
+ function materialize!(M::MatMulMatAdd{<:HcatLayout,<:VcatLayout})
+    α,A,B,β,C =  M.α,M.A,M.B,M.β,M.C
+    T = eltype(C)
+    _fill_lmul!(β,C) # this is temporary until strong β = false is supported
+    for (a,b) in zip(A.arrays,B.arrays)
+        materialize!(MulAdd(α,a,b,one(T),C))
+    end
+    C
+ end
