@@ -84,9 +84,29 @@ similar(bc::Broadcasted{ApplyArrayBroadcastStyle{N}}, ::Type{ElType}) where {N,E
     copyto!(dest, first(bc.args))
 end
 @inline function copyto!(dest::AbstractArray, bc::Broadcasted{ApplyArrayBroadcastStyle{N}}) where N 
-    @assert length(bc.args) == 1
-    copyto!(dest, first(bc.args))    
+    if length(bc.args) == 1
+        copyto!(dest, first(bc.args))
+        if bc.f !== identity
+            dest .= bc.f.(dest)
+        end
+    else
+        bc′ = mapbc(bc) do x
+            if x isa Applied
+                materialize(x)
+            else
+                x
+            end
+        end
+        materialize!(dest, bc′)
+    end
+    return dest
 end
+
+# Map over all nested Broadcasted and their arguments.  Using `broadcasted`
+# instead of `Broadcasted` to re-process arguments via `broadcastable`.
+@inline mapbc(f, bc::Broadcasted) =
+    f(broadcasted(bc.f, map(a -> mapbc(f, a), bc.args)...))
+@inline mapbc(f, x) = f(x)
 
 struct MatrixFunctionStyle{F} <: AbstractArrayApplyStyle end
 
@@ -120,6 +140,9 @@ Wrap a lazy object that wraps a computation producing an array to an
 array.
 """
 abstract type LazyArray{T,N} <: AbstractArray{T,N} end
+
+const LazyMatrix{T} = LazyArray{T,2}
+const LazyVector{T} = LazyArray{T,1}
 
 struct ApplyArray{T, N, F, Args<:Tuple} <: LazyArray{T,N}
     f::F
@@ -194,10 +217,14 @@ result_mul_style(::LazyArrayApplyStyle, _) = LazyArrayApplyStyle()
 result_mul_style(_, ::LazyArrayApplyStyle) = LazyArrayApplyStyle()
 
 
-struct  ApplyLayout{F, LAY} <: MemoryLayout end
+struct  ApplyLayout{F} <: MemoryLayout end
 
-MemoryLayout(M::Type{Applied{Style,F,Args}}) where {Style,F,Args} = ApplyLayout{F,tuple_type_memorylayouts(Args)}()
-MemoryLayout(M::Type{ApplyArray{T,N,F,Args}}) where {T,N,F,Args} = ApplyLayout{F,tuple_type_memorylayouts(Args)}()
+applylayout(::Type{F}, args...) where F = ApplyLayout{F}()
+
+MemoryLayout(::Type{Applied{Style,F,Args}}) where {Style,F,Args} = 
+    applylayout(F, tuple_type_memorylayouts(Args)...)
+MemoryLayout(::Type{ApplyArray{T,N,F,Args}}) where {T,N,F,Args} = 
+    applylayout(F, tuple_type_memorylayouts(Args)...)
 
 function show(io::IO, A::Applied) 
     print(io, "Applied(", A.f)
@@ -210,7 +237,7 @@ end
 applybroadcaststyle(_1, _2) = DefaultArrayStyle{2}()
 BroadcastStyle(M::Type{<:ApplyArray}) = applybroadcaststyle(M, MemoryLayout(M))
 
-Base.replace_in_print_matrix(A::ApplyMatrix, i::Integer, j::Integer, s::AbstractString) =
+Base.replace_in_print_matrix(A::LazyMatrix, i::Integer, j::Integer, s::AbstractString) =
     i in colsupport(A,j) ? s : Base.replace_with_centered_mark(s)
 
 ### 
@@ -243,5 +270,6 @@ end
 @inline getindex(A::ApplyMatrix, kr::AbstractUnitRange, jr::AbstractUnitRange) = lazy_getindex(A, kr, jr)
 
 
-diagonallayout(::LazyLayout) = LazyLayout()
+diagonallayout(::LazyLayout) = DiagonalLayout{LazyLayout}()
 diagonallayout(::ApplyLayout) = DiagonalLayout{LazyLayout}()
+
