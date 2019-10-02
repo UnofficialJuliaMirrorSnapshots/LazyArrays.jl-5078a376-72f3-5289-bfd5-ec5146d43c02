@@ -1,5 +1,5 @@
 using LazyArrays, FillArrays, LinearAlgebra, StaticArrays, Test
-import LazyArrays: MemoryLayout, DenseColumnMajor, materialize!, MulAdd, Applied, ApplyLayout
+import LazyArrays: MemoryLayout, DenseColumnMajor, PaddedLayout, materialize!, MulAdd, Applied, ApplyLayout
 
 @testset "concat" begin
     @testset "Vcat" begin
@@ -19,6 +19,7 @@ import LazyArrays: MemoryLayout, DenseColumnMajor, materialize!, MulAdd, Applied
         @test copy(A) !== A
         @test vec(A) === A
         @test A' == transpose(A) == Vector(A)'
+        @test permutedims(A) == permutedims(Vector(A))
 
         A = @inferred(Vcat(1:10, 1:20))
         @test @inferred(length(A)) == 30
@@ -35,6 +36,7 @@ import LazyArrays: MemoryLayout, DenseColumnMajor, materialize!, MulAdd, Applied
         @test A' == transpose(A) == Vector(A)'
         @test A' === Hcat((1:10)', (1:20)')
         @test transpose(A) === Hcat(transpose(1:10), transpose(1:20))
+        @test permutedims(A) == permutedims(Vector(A))
 
         A = Vcat(randn(2,10), randn(4,10))
         @test @inferred(length(A)) == 60
@@ -51,6 +53,7 @@ import LazyArrays: MemoryLayout, DenseColumnMajor, materialize!, MulAdd, Applied
         @test copy(A) !== A
         @test vec(A) == vec(Matrix(A))
         @test A' == transpose(A) == Matrix(A)'
+        @test permutedims(A) == permutedims(Matrix(A))
 
         A = Vcat(randn(2,10).+im.*randn(2,10), randn(4,10).+im.*randn(4,10))
         @test eltype(A) == ComplexF64
@@ -69,6 +72,7 @@ import LazyArrays: MemoryLayout, DenseColumnMajor, materialize!, MulAdd, Applied
         @test vec(A) == vec(Matrix(A))
         @test A' == Matrix(A)'
         @test transpose(A) == transpose(Matrix(A))
+        @test permutedims(A) == permutedims(Matrix(A))
 
         @test Vcat() isa Vcat{Any,1,Tuple{}}
 
@@ -77,6 +81,7 @@ import LazyArrays: MemoryLayout, DenseColumnMajor, materialize!, MulAdd, Applied
         @test A[1,1] == 1.0
         @test A[2,1] == 0.0
         @test axes(A) == (Base.OneTo(4),Base.OneTo(1))
+        @test permutedims(A) == permutedims(Matrix(A))
     end
     @testset "Hcat" begin
         A = @inferred(Hcat(1:10, 2:11))
@@ -309,4 +314,37 @@ import LazyArrays: MemoryLayout, DenseColumnMajor, materialize!, MulAdd, Applied
         @test maximum(x) == 3
         @test minimum(x) == 1
     end
+
+    @testset "copyto!" begin
+        a = Vcat(1, Zeros(10))
+        c = cache(Zeros(11));
+        @test MemoryLayout(typeof(a)) isa PaddedLayout
+        @test MemoryLayout(typeof(c)) isa PaddedLayout{DenseColumnMajor}
+        @test copyto!(c, a) ≡ c;
+        @test length(c.data) == 1
+        @test c == a
+
+        a = Vcat(1:3, Zeros(10))
+        c = cache(Zeros(13));
+        @test MemoryLayout(typeof(a)) isa PaddedLayout
+        @test MemoryLayout(typeof(c)) isa PaddedLayout{DenseColumnMajor}
+        @test copyto!(c, a) ≡ c;
+        @test length(c.data) == 3
+        @test c == a
+
+        @test dot(a,a) ≡ dot(a,c) ≡ dot(c,a) ≡ dot(c,c) ≡ 14.0
+
+
+        a = Vcat(1:3, Zeros(5))
+        c = cache(Zeros(13));
+        @test copyto!(c, a) ≡ c;
+        @test length(c.data) == 3
+        @test c[1:8] == a
+
+        a = cache(Zeros(13)); b = cache(Zeros(15));
+        @test a ≠ b
+        b = cache(Zeros(13));
+        a[3] = 2; b[3] = 2; b[5]=0;
+        @test a == b
+    end 
 end

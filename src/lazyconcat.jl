@@ -131,6 +131,27 @@ function copyto!(dest::AbstractMatrix, V::Vcat{<:Any,2})
     pos = 1
     for a in arrays
         p1 = pos+size(a,1)-1
+        dest[pos:p1, :] .= a
+        pos = p1+1
+    end
+    return dest
+end
+
+# this is repeated to avoid allocation in .=
+function copyto!(dest::AbstractMatrix, V::Vcat{<:Any,2,<:Tuple{Vararg{<:AbstractMatrix}}})
+    arrays = V.args
+    nargs = length(arrays)
+    nrows = size(dest,1)
+    nrows == sum(a->size(a, 1), arrays) || throw(DimensionMismatch("sum of rows each matrix must equal $nrows"))
+    ncols = size(dest, 2)
+    for a in arrays
+        if size(a, 2) != ncols
+            throw(DimensionMismatch("number of columns of each array must match (got $(map(x->size(x,2), A)))"))
+        end
+    end
+    pos = 1
+    for a in arrays
+        p1 = pos+size(a,1)-1
         dest[pos:p1, :] = a
         pos = p1+1
     end
@@ -258,6 +279,12 @@ _vec(a) = a
 _vec(a::AbstractArray) = vec(a)
 _vec(a::Adjoint{<:Number,<:AbstractVector}) = _vec(parent(a))
 vec(A::Hcat) = Vcat(_vec.(A.args)...)
+
+_permutedims(a) = a
+_permutedims(a::AbstractArray) = permutedims(a)
+
+permutedims(A::Hcat{T}) where T = Vcat{T}(map(_permutedims,A.args)...)
+permutedims(A::Vcat{T}) where T = Hcat{T}(map(_permutedims,A.args)...)
 
 
 #####
@@ -472,3 +499,42 @@ colsupport(M::Vcat, j) = first(colsupport(first(M.args),j)):(size(Vcat(most(M.ar
 
 struct PaddedLayout{L} <: MemoryLayout end
 applylayout(::Type{typeof(vcat)}, ::A, ::ZerosLayout) where A = PaddedLayout{A}()
+cachedlayout(::A, ::ZerosLayout) where A = PaddedLayout{A}()
+
+
+paddeddata(A::CachedArray) = A.data
+paddeddata(A::Vcat) = A.args[1]
+
+function ==(A::CachedVector{<:Any,<:Any,<:Zeros}, B::CachedVector{<:Any,<:Any,<:Zeros})
+    length(A) == length(B) || return false
+    n = max(length(A.data), length(B.data))
+    resizedata!(A,n); resizedata!(B,n)
+    A.data == B.data
+end
+
+# special copyto! since `similar` of a padded returns a cached
+for Typ in (:Number, :AbstractVector)
+    @eval function copyto!(dest::CachedVector{T,Vector{T},<:Zeros{T,1}}, src::Vcat{<:Any,1,<:Tuple{<:$Typ,<:Zeros}}) where T
+        length(src) ≤ length(dest)  || throw(BoundsError())
+        a,_ = src.args
+        resizedata!(dest, length(a)) # make sure we are padded enough
+        copyto!(dest.data, a)
+        dest
+    end
+end
+
+struct Dot{StyleA,StyleB,ATyp,BTyp}
+    A::ATyp
+    B::BTyp
+end
+
+Dot(A::ATyp,B::BTyp) where {ATyp,BTyp} = Dot{typeof(MemoryLayout(ATyp)), typeof(MemoryLayout(BTyp)), ATyp, BTyp}(A, B)
+materialize(d::Dot{<:Any,<:Any,<:AbstractArray,<:AbstractArray}) = Base.invoke(dot, Tuple{AbstractArray,AbstractArray}, d.A, d.B)
+function materialize(d::Dot{<:PaddedLayout,<:PaddedLayout,<:AbstractVector{T},<:AbstractVector{V}}) where {T,V}
+    a,b = paddeddata(d.A), paddeddata(d.B)
+    m = min(length(a), length(b))
+    convert(promote_type(T,V), dot(view(a,1:m), view(b,1:m)))
+end
+
+dot(a::CachedArray, b::AbstractArray) = materialize(Dot(a,b)) 
+dot(a::LazyArray, b::AbstractArray) = materialize(Dot(a,b)) 
