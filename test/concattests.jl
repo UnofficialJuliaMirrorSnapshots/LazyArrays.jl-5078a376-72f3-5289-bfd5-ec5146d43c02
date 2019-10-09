@@ -1,5 +1,5 @@
 using LazyArrays, FillArrays, LinearAlgebra, StaticArrays, Test
-import LazyArrays: MemoryLayout, DenseColumnMajor, PaddedLayout, materialize!, MulAdd, Applied, ApplyLayout
+import LazyArrays: MemoryLayout, DenseColumnMajor, PaddedLayout, materialize!, MulAdd, Applied, ApplyLayout, arguments
 
 @testset "concat" begin
     @testset "Vcat" begin
@@ -347,4 +347,37 @@ import LazyArrays: MemoryLayout, DenseColumnMajor, PaddedLayout, materialize!, M
         a[3] = 2; b[3] = 2; b[5]=0;
         @test a == b
     end 
+
+    @testset "norm" begin
+        for a in (Vcat(1,2,Fill(5,3)), Hcat([1,2],randn(2,2)), Vcat(1,Float64[])),
+            p in (-Inf, 0, 0.1, 1, 2, 3, Inf)
+            @test norm(a,p) ≈ norm(Array(a),p)
+        end
+    end
+
+    @testset "SubVcat" begin
+        A = Vcat(1,[2,3], Fill(5,10))
+        V = view(A,3:5)
+        @test MemoryLayout(typeof(V)) isa ApplyLayout{typeof(vcat)}
+        VERSION ≥ v"1.1" && @inferred(arguments(V))
+        @test arguments(V)[1] ≡ Fill(1,0)
+        @test A[parentindices(V)...] == copy(V) == Array(A)[parentindices(V)...]
+
+        A = Vcat((1:100)', Zeros(1,100),Fill(1,2,100))
+        V = view(A,:,3:5)
+        @test MemoryLayout(typeof(V)) isa ApplyLayout{typeof(vcat)}
+        @test A[parentindices(V)...] == copy(V) == Array(A)[parentindices(V)...]
+        V = view(A,2:3,3:5)
+        @test MemoryLayout(typeof(V)) isa ApplyLayout{typeof(vcat)}
+        @test A[parentindices(V)...] == copy(V) == Array(A)[parentindices(V)...]
+
+        A = Hcat(1:10, Zeros(10,10))
+        V = view(A,3:5,:)
+        @test MemoryLayout(typeof(V)) isa ApplyLayout{typeof(hcat)}
+        @test A[parentindices(V)...] == copy(V) == Array(A)[parentindices(V)...]
+        V = view(A,3:5,1:4)
+        @test MemoryLayout(typeof(V)) isa ApplyLayout{typeof(hcat)}
+        VERSION ≥ v"1.1" && @inferred(arguments(V))
+        @test arguments(V)[1] == reshape(3:5,3,1)
+    end
 end

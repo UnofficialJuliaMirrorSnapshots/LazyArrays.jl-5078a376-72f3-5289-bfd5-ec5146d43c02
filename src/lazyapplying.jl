@@ -16,6 +16,10 @@ end
 @inline Applied{Style}(f::F, args::Args) where {Style,F,Args<:Tuple} = Applied{Style,F,Args}(f, args)
 @inline Applied{Style}(A::Applied) where Style = Applied{Style}(A.f, A.args)
 
+arguments(a) = a.args
+arguments(_, a) = a.args
+arguments(a::AbstractArray) = arguments(MemoryLayout(typeof(a)), a)
+
 @inline check_applied_axes(A::Applied) = nothing
 
 function instantiate(A::Applied{Style}) where Style
