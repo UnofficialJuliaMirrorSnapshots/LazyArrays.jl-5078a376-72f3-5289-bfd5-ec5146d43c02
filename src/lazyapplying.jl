@@ -16,6 +16,10 @@ end
 @inline Applied{Style}(f::F, args::Args) where {Style,F,Args<:Tuple} = Applied{Style,F,Args}(f, args)
 @inline Applied{Style}(A::Applied) where Style = Applied{Style}(A.f, A.args)
 
+
+call(a) = a.f
+call(_, a) = a.f
+call(a::AbstractArray) = call(MemoryLayout(typeof(a)), a)
 arguments(a) = a.args
 arguments(_, a) = a.args
 arguments(a::AbstractArray) = arguments(MemoryLayout(typeof(a)), a)
@@ -182,8 +186,6 @@ AbstractArray{T}(A::ApplyArray{<:Any,N}) where {T,N} = ApplyArray{T,N}(A.f, map(
 AbstractArray{T,N}(A::ApplyArray{T,N}) where {T,N} = copy(A)
 AbstractArray{T,N}(A::ApplyArray{<:Any,N}) where {T,N} = ApplyArray{T,N}(A.f, map(copy,A.args)...)
 
-
-@inline Applied(A::ApplyArray) = applied(A.f, A.args...)
 @inline axes(A::ApplyArray) = axes(Applied(A))
 @inline size(A::ApplyArray) = map(length, axes(A))
 @inline copy(A::ApplyArray) = ApplyArray(A.f, map(copy,A.args)...)
@@ -230,6 +232,9 @@ MemoryLayout(::Type{Applied{Style,F,Args}}) where {Style,F,Args} =
 MemoryLayout(::Type{ApplyArray{T,N,F,Args}}) where {T,N,F,Args} = 
     applylayout(F, tuple_type_memorylayouts(Args)...)
 
+@inline Applied(A::AbstractArray) = Applied(call(A), arguments(A)...)
+@inline ApplyArray(A::AbstractArray) = ApplyArray(call(A), arguments(A)...)
+
 function show(io::IO, A::Applied) 
     print(io, "Applied(", A.f)
     for a in A.args
@@ -238,11 +243,12 @@ function show(io::IO, A::Applied)
     print(io, ')')
 end
 
-applybroadcaststyle(_1, _2) = DefaultArrayStyle{2}()
+applybroadcaststyle(::Type{<:AbstractArray{<:Any,N}}, _2) where N = DefaultArrayStyle{N}()
+applybroadcaststyle(::Type{<:AbstractArray{<:Any,N}}, ::LazyLayout) where N = LazyArrayStyle{N}()
 BroadcastStyle(M::Type{<:ApplyArray}) = applybroadcaststyle(M, MemoryLayout(M))
 
-Base.replace_in_print_matrix(A::LazyMatrix, i::Integer, j::Integer, s::AbstractString) =
-    i in colsupport(A,j) ? s : Base.replace_with_centered_mark(s)
+replace_in_print_matrix(A::LazyMatrix, i::Integer, j::Integer, s::AbstractString) =
+    i in colsupport(A,j) ? s : replace_with_centered_mark(s)
 
 ### 
 # Number special cases
@@ -273,7 +279,37 @@ end
 @inline getindex(A::LazyMatrix, kr::AbstractUnitRange, jr::Colon) = lazy_getindex(A, kr, jr)
 @inline getindex(A::LazyMatrix, kr::AbstractUnitRange, jr::AbstractUnitRange) = lazy_getindex(A, kr, jr)
 
+@inline copyto!(dest::AbstractArray{T,N}, src::ApplyArray{T,N}) where {T,N} = copyto!(dest, Applied(src))
+@inline copyto!(dest::AbstractArray, src::ApplyArray) = copyto!(dest, Applied(src))    
 
-diagonallayout(::LazyLayout) = DiagonalLayout{LazyLayout}()
-diagonallayout(::ApplyLayout) = DiagonalLayout{LazyLayout}()
+# avoid infinite-loop
+_base_copyto!(dest::AbstractArray{T,N}, src::AbstractArray{T,N}) where {T,N} = Base.invoke(copyto!, NTuple{2,AbstractArray{T,N}}, dest, src)
+_base_copyto!(dest::AbstractArray, src::AbstractArray) = Base.invoke(copyto!, NTuple{2,AbstractArray}, dest, src)
+@inline copyto!(dest::AbstractArray, M::Applied{LazyArrayApplyStyle}) = _base_copyto!(dest, materialize(M))
 
+## 
+# triu/tril
+##
+for tri in (:tril, :triu)
+    for op in (:axes, :size)
+        @eval begin
+            $op(A::Applied{<:Any,typeof($tri)}) = $op(first(A.args))
+            $op(A::Applied{<:Any,typeof($tri)}, j) = $op(first(A.args), j)
+        end
+    end
+    @eval begin 
+        ndims(::Applied{<:Any,typeof($tri)}) = 2
+        eltype(A::Applied{<:Any,typeof($tri)}) = eltype(first(A.args))
+    end
+end
+
+getindex(A::ApplyMatrix{T,typeof(triu),<:Tuple{<:AbstractMatrix}}, k::Integer, j::Integer) where T = 
+    j ≥ k ? A.args[1][k,j] : zero(T)
+
+getindex(A::ApplyMatrix{T,typeof(triu),<:Tuple{<:AbstractMatrix,<:Integer}}, k::Integer, j::Integer) where T = 
+    j ≥ k+A.args[2] ? A.args[1][k,j] : zero(T)    
+
+replace_in_print_matrix(A::ApplyMatrix{<:Any,typeof(triu),<:Tuple{<:AbstractMatrix}}, i::Integer, j::Integer, s::AbstractString) =
+    j ≥ i ? replace_in_print_matrix(A.args[1], i, j, s) : replace_with_centered_mark(s)
+replace_in_print_matrix(A::ApplyMatrix{<:Any,typeof(triu),<:Tuple{<:AbstractMatrix,<:Integer}}, i::Integer, j::Integer, s::AbstractString) =
+    j ≥ i+A.args[2] ? replace_in_print_matrix(A.args[1], i, j, s) : replace_with_centered_mark(s)    
