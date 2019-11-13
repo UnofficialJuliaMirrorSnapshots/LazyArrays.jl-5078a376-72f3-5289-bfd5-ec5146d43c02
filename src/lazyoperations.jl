@@ -23,24 +23,64 @@ axes(a::Kron{<:Any,1}) = (OneTo(size(a,1)),)
 axes(a::Kron{<:Any,2}) = (OneTo(size(a,1)), OneTo(size(a,2)))
 axes(a::Kron{<:Any,N}) where {N} = (@_inline_meta; ntuple(M -> OneTo(size(a, M)), Val(N)))
 
-getindex(K::Kron{T,1,<:Tuple{<:AbstractVector}}, k::Int) where T =
-    first(K.args)[k]
 
-function getindex(K::Kron{T,1,<:Tuple{<:AbstractVector,<:AbstractVector}}, k::Int) where T
-    A,B = K.args
+function det(K::Kron{<:Any, 2})
+    (size(K, 1) == size(K, 2)) || throw(DimensionMismatch("matrix is not square: dimensions are $(size(K))"))
+
+    d = 1.
+    s = size(K, 1)
+
+    for A in K.args
+        if size(A, 1) == size(A, 2)
+            dA = det(A)
+            if iszero(dA)
+                return dA
+            end
+            d *= dA^(s ÷ size(A, 1))
+        else
+            # The Kronecker Product of rectangular matrices, if it is square, will
+            # have determinant zero. This can be shown by using the fact that
+            # rank(A ⊗ B) = rank(A)rank(B) and showing that this is strictly less
+            # than the number of rows in the resulting Kronecker matrix. Hence,
+            # since A ⊗ B does not have full rank, its determinant must be zero.
+            return zero(d)
+        end
+    end
+    return d
+end
+
+function tr(K::Kron{<:Any, 2})
+    (size(K, 1) == size(K, 2)) || throw(DimensionMismatch("matrix is not square: dimensions are $(size(K))"))
+    if all(A -> (size(A, 1) == size(A, 2)), K.args)  # check if all component matrices are square
+        return prod(tr.(K.args))
+    else
+        return sum(diag(K))
+    end
+end
+
+
+kron_getindex((A,)::Tuple{AbstractVector}, k::Integer) = A[k]
+function kron_getindex((A,B)::NTuple{2,AbstractVector}, k::Integer)
     K,κ = divrem(k-1, length(B))
     A[K+1]*B[κ+1]
 end
-
-getindex(K::Kron{T,2,<:Tuple{<:AbstractMatrix}}, k::Int, j::Int) where T =
-    first(K.args)[k,j]
-
-function getindex(K::Kron{T,2,<:Tuple{<:AbstractArray,<:AbstractArray}}, k::Int, j::Int) where T
-    A,B = K.args
+kron_getindex((A,)::Tuple{AbstractMatrix}, k::Integer, j::Integer) = A[k,j]
+function kron_getindex((A,B)::NTuple{2,AbstractArray}, k::Integer, j::Integer)
     K,κ = divrem(k-1, size(B,1))
     J,ξ = divrem(j-1, size(B,2))
     A[K+1,J+1]*B[κ+1,ξ+1]
 end
+
+kron_getindex(args::Tuple, k::Integer, j::Integer) = kron_getindex(tuple(Kron(args[1:2]...), args[3:end]...), k, j)
+kron_getindex(args::Tuple, k::Integer) = kron_getindex(tuple(Kron(args[1:2]...), args[3:end]...), k)
+
+getindex(K::Kron{<:Any,1}, k::Integer) = kron_getindex(K.args, k)
+getindex(K::Kron{<:Any,2}, k::Integer, j::Integer) = kron_getindex(K.args, k, j)
+getindex(K::Applied{DefaultArrayApplyStyle,typeof(kron)}, k::Integer) = kron_getindex(K.args, k)
+getindex(K::Applied{DefaultArrayApplyStyle,typeof(kron)}, k::Integer, j::Integer) = kron_getindex(K.args, k, j)
+
+
+
 
 ## Adapted from julia/stdlib/LinearAlgebra/src/dense.jl kron definition
 function _kron2!(R, K)

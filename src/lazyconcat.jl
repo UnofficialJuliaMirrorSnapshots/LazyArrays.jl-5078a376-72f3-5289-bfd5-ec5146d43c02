@@ -31,7 +31,8 @@ Base.IndexStyle(::Type{<:Vcat{T,1}}) where T = Base.IndexLinear()
 Base.IndexStyle(::Type{<:Vcat{T,2}}) where T = Base.IndexCartesian()
 
 
-@propagate_inbounds @inline function getindex(f::Vcat{T,1}, k::Integer) where T
+@propagate_inbounds @inline function vcat_getindex(f, k::Integer)
+    T = eltype(f)
     κ = k
     for A in f.args
         n = length(A)
@@ -41,7 +42,8 @@ Base.IndexStyle(::Type{<:Vcat{T,2}}) where T = Base.IndexCartesian()
     throw(BoundsError(f, k))
 end
 
-@propagate_inbounds @inline function getindex(f::Vcat{T,2}, k::Integer, j::Integer) where T
+@propagate_inbounds @inline function vcat_getindex(f, k::Integer, j::Integer)
+    T = eltype(f)
     κ = k
     for A in f.args
         n = size(A,1)
@@ -50,6 +52,11 @@ end
     end
     throw(BoundsError(f, (k,j)))
 end
+
+@propagate_inbounds @inline getindex(f::Vcat{<:Any,1}, k::Integer) = vcat_getindex(f, k)
+@propagate_inbounds @inline getindex(f::Vcat{<:Any,2}, k::Integer, j::Integer) = vcat_getindex(f, k, j)
+getindex(f::Applied{DefaultArrayApplyStyle,typeof(vcat)}, k::Integer)= vcat_getindex(f, k)
+getindex(f::Applied{DefaultArrayApplyStyle,typeof(vcat)}, k::Integer, j::Integer)= vcat_getindex(f, k, j)
 
 @propagate_inbounds @inline function setindex!(f::Vcat{T,1}, v, k::Integer) where T
     κ = k
@@ -93,7 +100,8 @@ ndims(::Applied{<:Any,typeof(hcat)}) = 2
 size(f::Applied{<:Any,typeof(hcat)}) = (size(f.args[1],1), +(map(a -> size(a,2), f.args)...))
 Base.IndexStyle(::Type{<:Hcat}) where T = Base.IndexCartesian()
 
-function getindex(f::Hcat{T}, k::Integer, j::Integer) where T
+function hcat_getindex(f, k::Integer, j::Integer)
+    T = eltype(f)
     ξ = j
     for A in f.args
         n = size(A,2)
@@ -102,6 +110,9 @@ function getindex(f::Hcat{T}, k::Integer, j::Integer) where T
     end
     throw(BoundsError(f, (k,j)))
 end
+
+getindex(f::Hcat, k::Integer, j::Integer) = hcat_getindex(f, k, j)
+getindex(f::Applied{DefaultArrayApplyStyle,typeof(hcat)}, k::Integer, j::Integer)= hcat_getindex(f, k, j)
 
 function setindex!(f::Hcat{T}, v, k::Integer, j::Integer) where T
     ξ = j
@@ -540,8 +551,8 @@ end
 # subarrays
 ###
 
-subarraylayout(::ApplyLayout{typeof(vcat)}, _) = ApplyLayout{typeof(vcat)}()
-subarraylayout(::ApplyLayout{typeof(hcat)}, _) = ApplyLayout{typeof(hcat)}()
+sublayout(::ApplyLayout{typeof(vcat)}, _) = ApplyLayout{typeof(vcat)}()
+sublayout(::ApplyLayout{typeof(hcat)}, _) = ApplyLayout{typeof(hcat)}()
 
 arguments(::ApplyLayout{typeof(vcat)}, V::SubArray{<:Any,2,<:Any,<:Tuple{<:Slice,<:Any}}) = 
     view.(arguments(parent(V)), Ref(:), Ref(parentindices(V)[2]))
@@ -623,13 +634,26 @@ materialize!(M::MatMulVecAdd{<:AbstractColumnMajor,<:ApplyLayout{typeof(vcat)}})
 
 ## print
 
+_replace_in_print_matrix(A::AbstractArray, k, j, s) = replace_in_print_matrix(A, k, j, s)
+_replace_in_print_matrix(_, k, j, s) = s
+
 function replace_in_print_matrix(f::Vcat{<:Any,1}, k::Integer, j::Integer, s::AbstractString)
     @assert j == 1
     κ = k
     for A in f.args
         n = length(A)
-        κ ≤ n && return replace_in_print_matrix(A, κ, 1, s)
+        κ ≤ n && return _replace_in_print_matrix(A, κ, 1, s)
         κ -= n
     end
     throw(BoundsError(f, k))
+end
+
+function replace_in_print_matrix(f::Vcat{<:Any,2}, k::Integer, j::Integer, s::AbstractString)
+    κ = k
+    for A in f.args
+        n = size(A,1)
+        κ ≤ n && return _replace_in_print_matrix(A, κ, j, s)
+        κ -= n
+    end
+    throw(BoundsError(f, (k,j)))
 end
